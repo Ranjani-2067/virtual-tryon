@@ -1,0 +1,48 @@
+#basic keypoints shirt: final
+
+import cv2
+import numpy as np
+import tensorflow as tf
+import tensorflow_hub as hub
+import matplotlib.pyplot as plt
+from tkinter import Tk, filedialog
+
+# --- File upload ---
+Tk().withdraw()  # Hide the main Tk window
+file_path = filedialog.askopenfilename(title="Select a person image",
+                                       filetypes=[("Image files", "*.jpg *.jpeg *.png")])
+if not file_path:
+    print("No file selected.")
+    exit()
+
+# --- Read and process image ---
+image = cv2.imread(file_path)
+if image is None:
+    print("Error: Could not load the image.")
+    exit()
+
+image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+input_image = tf.image.resize(image_rgb, (192, 192))
+input_image = tf.expand_dims(input_image, axis=0)
+input_image = tf.cast(input_image, dtype=tf.int32)
+
+# --- Load MoveNet from TF Hub ---
+model = hub.load("https://tfhub.dev/google/movenet/singlepose/lightning/4")
+movenet = model.signatures['serving_default']
+
+# --- Run inference ---
+outputs = movenet(input_image)
+keypoints = outputs['output_0'].numpy()[0][0]  # Shape: (17, 3)
+
+# --- Draw keypoints on original image ---
+height, width, _ = image.shape
+for kp in keypoints:
+    y, x, confidence = kp
+    if confidence > 0.3:
+        cx, cy = int(x * width), int(y * height)
+        cv2.circle(image, (cx, cy), 5, (0, 255, 0), -1)
+
+# --- Display image with keypoints ---
+cv2.imshow("Pose Estimation", image)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
