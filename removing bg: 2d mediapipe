@@ -1,0 +1,56 @@
+#removing bg(mediapipe)
+
+import cv2
+import mediapipe as mp
+import matplotlib.pyplot as plt
+from tkinter import filedialog, Tk
+import numpy as np
+
+# --- Image uploader ---
+def upload_image(title='Select image'):
+    root = Tk()
+    root.withdraw()
+    file_path = filedialog.askopenfilename(title=title, filetypes=[("Image files", "*.jpg *.jpeg *.png")])
+    return file_path
+
+# --- Background remover using MediaPipe ---
+def remove_bg_mediapipe(image_path):
+    image = cv2.imread(image_path)
+    if image is None:
+        raise ValueError("Failed to read image:", image_path)
+
+    mp_selfie = mp.solutions.selfie_segmentation
+    with mp_selfie.SelfieSegmentation(model_selection=1) as selfie:
+        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = selfie.process(rgb_image)
+
+        mask = results.segmentation_mask
+        condition = mask > 0.6  # tweak this threshold if needed
+
+        bg_removed = np.zeros(image.shape, dtype=np.uint8)
+        bg_removed[:] = (255, 255, 255)  # white background
+        final = np.where(condition[:, :, None], image, bg_removed)
+
+    return final
+
+# --- Upload and process ---
+print("Upload the image of the person:")
+person_path = upload_image("Upload person image")
+person_img = remove_bg_mediapipe(person_path)
+
+print("Upload the image of the shirt:")
+shirt_path = upload_image("Upload shirt image")
+shirt_img = remove_bg_mediapipe(shirt_path)
+
+# --- Show result ---
+fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+axs[0].imshow(cv2.cvtColor(person_img, cv2.COLOR_BGR2RGB))
+axs[0].set_title("Person (BG Removed)")
+axs[0].axis('off')
+
+axs[1].imshow(cv2.cvtColor(shirt_img, cv2.COLOR_BGR2RGB))
+axs[1].set_title("Shirt (BG Removed)")
+axs[1].axis('off')
+
+plt.tight_layout()
+plt.show()
