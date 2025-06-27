@@ -1,0 +1,85 @@
+#overlay: trial 1
+
+import cv2
+import numpy as np
+import tensorflow as tf
+import tensorflow_hub as hub
+from tkinter import Tk, filedialog
+
+# --- Step 1: Upload person image ---
+Tk().withdraw()
+person_path = filedialog.askopenfilename(title="Select the person image",
+                                         filetypes=[("Image files", "*.jpg *.jpeg *.png")])
+if not person_path:
+    print("No person image selected.")
+    exit()
+
+person_image = cv2.imread(person_path)
+if person_image is None:
+    print("Could not load person image.")
+    exit()
+
+# --- Step 2: Upload shirt image ---
+shirt_path = filedialog.askopenfilename(title="Select the shirt image",
+                                        filetypes=[("Image files", "*.jpg *.jpeg *.png")])
+if not shirt_path:
+    print("No shirt image selected.")
+    exit()
+
+shirt_image = cv2.imread(shirt_path, cv2.IMREAD_UNCHANGED)  # Load with alpha if any
+if shirt_image is None:
+    print("Could not load shirt image.")
+    exit()
+
+# --- Step 3: Run pose detection ---
+image_rgb = cv2.cvtColor(person_image, cv2.COLOR_BGR2RGB)
+input_image = tf.image.resize(image_rgb, (192, 192))
+input_image = tf.expand_dims(input_image, axis=0)
+input_image = tf.cast(input_image, dtype=tf.int32)
+
+model = hub.load("https://tfhub.dev/google/movenet/singlepose/lightning/4")
+movenet = model.signatures['serving_default']
+keypoints = movenet(input_image)['output_0'].numpy()[0][0]  # Shape: (17, 3)
+
+# --- Step 4: Get shoulder keypoints (left & right) ---
+h, w, _ = person_image.shape
+left_shoulder = keypoints[5]
+right_shoulder = keypoints[6]
+
+if left_shoulder[2] < 0.3 or right_shoulder[2] < 0.3:
+    print("Shoulder keypoints not detected confidently.")
+    exit()
+
+lx, ly = int(left_shoulder[1] * w), int(left_shoulder[0] * h)
+rx, ry = int(right_shoulder[1] * w), int(right_shoulder[0] * h)
+
+# --- Step 5: Resize and overlay shirt ---
+shirt_width = abs(rx - lx)
+aspect_ratio = shirt_image.shape[0] / shirt_image.shape[1]
+shirt_height = int(shirt_width * aspect_ratio)
+
+# Resize shirt
+resized_shirt = cv2.resize(shirt_image, (shirt_width, shirt_height))
+
+# Calculate placement
+x_offset = min(lx, rx)
+y_offset = min(ly, ry)
+
+# Overlay the shirt
+for y in range(shirt_height):
+    for x in range(shirt_width):
+        if y + y_offset >= person_image.shape[0] or x + x_offset >= person_image.shape[1]:
+            continue
+        pixel = resized_shirt[y, x]
+        if resized_shirt.shape[2] == 4:  # If shirt has alpha
+            alpha = pixel[3] / 255.0
+            person_image[y + y_offset, x + x_offset] = (
+                alpha * pixel[:3] + (1 - alpha) * person_image[y + y_offset, x + x_offset]
+            )
+        else:
+            person_image[y + y_offset, x + x_offset] = pixel  # No transparency
+
+# --- Step 6: Display result ---
+cv2.imshow("Virtual Try-On Result", person_image)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
