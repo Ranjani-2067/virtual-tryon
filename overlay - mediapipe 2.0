@@ -1,0 +1,105 @@
+import cv2
+import mediapipe as mp
+import numpy as np
+from tkinter import Tk, filedialog
+
+# Initialize MediaPipe Pose and Segmentation
+mp_pose = mp.solutions.pose
+mp_selfie_segmentation = mp.solutions.selfie_segmentation
+pose = mp_pose.Pose(static_image_mode=True)
+segmenter = mp_selfie_segmentation.SelfieSegmentation(model_selection=1)
+
+# Open file dialog
+def select_image(title="Select image"):
+    Tk().withdraw()
+    return filedialog.askopenfilename(title=title)
+
+# Extract keypoints
+def get_keypoints(image_path):
+    image = cv2.imread(image_path)
+    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = pose.process(rgb_image)
+
+    if not results.pose_landmarks:
+        print("❌ No pose detected.")
+        return None
+
+    h, w = image.shape[:2]
+    lm = results.pose_landmarks.landmark
+
+    keypoints = {
+        "left_shoulder": (int(lm[mp_pose.PoseLandmark.LEFT_SHOULDER].x * w),
+                          int(lm[mp_pose.PoseLandmark.LEFT_SHOULDER].y * h),
+                          lm[mp_pose.PoseLandmark.LEFT_SHOULDER].visibility),
+        "right_shoulder": (int(lm[mp_pose.PoseLandmark.RIGHT_SHOULDER].x * w),
+                           int(lm[mp_pose.PoseLandmark.RIGHT_SHOULDER].y * h),
+                           lm[mp_pose.PoseLandmark.RIGHT_SHOULDER].visibility),
+        "left_hip": (int(lm[mp_pose.PoseLandmark.LEFT_HIP].x * w),
+                     int(lm[mp_pose.PoseLandmark.LEFT_HIP].y * h)),
+        "right_hip": (int(lm[mp_pose.PoseLandmark.RIGHT_HIP].x * w),
+                      int(lm[mp_pose.PoseLandmark.RIGHT_HIP].y * h))
+    }
+
+    return keypoints, image
+
+# Overlay shirt
+def overlay_shirt(person_img, shirt_path, keypoints):
+    shirt_img = cv2.imread(shirt_path, cv2.IMREAD_UNCHANGED)
+
+    if shirt_img.shape[2] != 4:
+        print("❌ Shirt image must have transparency.")
+        return
+
+    x1, y1, v1 = keypoints["left_shoulder"]
+    x2, y2, v2 = keypoints["right_shoulder"]
+    if v1 < 0.3 or v2 < 0.3:
+        print("❌ Shoulders not clearly visible.")
+        return
+
+    torso_height = max(keypoints["left_hip"][1], keypoints["right_hip"][1]) - min(y1, y2)
+    shirt_width = abs(x2 - x1)
+    resized_shirt = cv2.resize(shirt_img, (shirt_width, torso_height))
+
+    # Optional: Show resized shirt separately
+    # cv2.imshow("Resized Shirt", resized_shirt[:, :, :3])
+    # cv2.waitKey(0)
+
+    # Segment mask
+    rgb = cv2.cvtColor(person_img, cv2.COLOR_BGR2RGB)
+    mask_result = segmenter.process(rgb)
+    mask = mask_result.segmentation_mask
+    mask = mask.astype(np.float32)
+
+    top_y = min(y1, y2)
+    mid_x = (x1 + x2) // 2
+    start_x = mid_x - resized_shirt.shape[1] // 2
+    start_y = top_y - int(0.05 * torso_height)
+
+    for y in range(resized_shirt.shape[0]):
+        for x in range(resized_shirt.shape[1]):
+            px = start_x + x
+            py = start_y + y
+            if px < 0 or py < 0 or px >= person_img.shape[1] or py >= person_img.shape[0]:
+                continue
+            alpha = resized_shirt[y, x, 3] / 255.0
+            if alpha > 0:
+                # Slight mask influence — lets shirt peek through
+                body_visibility = mask[py, px]
+                blend = 1 - min(0.5, body_visibility)
+                person_img[py, px] = (
+                    alpha * blend * resized_shirt[y, x, :3] + (1 - alpha * blend) * person_img[py, px]
+                )
+
+    cv2.imshow("🧥 Virtual Try-On Result", person_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+# Main
+print("👤 Select the person image")
+person_path = select_image("Select person image")
+keypoints, person_img = get_keypoints(person_path)
+
+print("🧥 Select the shirt image (transparent PNG)")
+shirt_path = select_image("Select shirt image")
+
+overlay_shirt(person_img, shirt_path, keypoints)
