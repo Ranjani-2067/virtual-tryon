@@ -1,0 +1,83 @@
+import cv2
+import mediapipe as mp
+import numpy as np
+from tkinter import Tk, filedialog
+from PIL import Image
+
+# Initialize MediaPipe Pose
+mp_pose = mp.solutions.pose
+pose = mp_pose.Pose(static_image_mode=True)
+
+# Open file dialog to select image
+def select_image(title="Select image"):
+    Tk().withdraw()
+    return filedialog.askopenfilename(title=title)
+
+# Get shoulder keypoints
+def get_shoulders(image_path):
+    image = cv2.imread(image_path)
+    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = pose.process(rgb_image)
+    
+    if not results.pose_landmarks:
+        print("❌ No pose detected.")
+        return None, None
+
+    landmarks = results.pose_landmarks.landmark
+    left = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER]
+    right = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER]
+
+    h, w = image.shape[:2]
+    left_shoulder = (int(left.x * w), int(left.y * h), left.visibility)
+    right_shoulder = (int(right.x * w), int(right.y * h), right.visibility)
+
+    return left_shoulder, right_shoulder
+
+# Overlay shirt image using alpha blending
+def overlay_shirt(person_path, shirt_path, left_shoulder, right_shoulder):
+    person_img = cv2.imread(person_path)
+    shirt_img = cv2.imread(shirt_path, cv2.IMREAD_UNCHANGED)
+
+    if shirt_img.shape[2] != 4:
+        print("❌ Shirt image must have transparency.")
+        return
+
+    x1, y1, v1 = left_shoulder
+    x2, y2, v2 = right_shoulder
+    if v1 < 0.3 or v2 < 0.3:
+        print("❌ Shoulders not clearly visible.")
+        return
+
+    shirt_width = abs(x2 - x1)
+    scale = shirt_width / shirt_img.shape[1]
+    shirt_height = int(shirt_img.shape[0] * scale)
+    resized_shirt = cv2.resize(shirt_img, (shirt_width, shirt_height))
+
+    top_y = min(y1, y2)
+    mid_x = (x1 + x2) // 2
+    start_x = mid_x - resized_shirt.shape[1] // 2
+    start_y = top_y
+
+    for y in range(resized_shirt.shape[0]):
+        for x in range(resized_shirt.shape[1]):
+            if start_y + y >= person_img.shape[0] or start_x + x >= person_img.shape[1] or start_x + x < 0:
+                continue
+            alpha = resized_shirt[y, x, 3] / 255.0
+            if alpha > 0:
+                person_img[start_y + y, start_x + x] = (
+                    alpha * resized_shirt[y, x, :3] + (1 - alpha) * person_img[start_y + y, start_x + x]
+                )
+
+    cv2.imshow("Virtual Try-On Result", person_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+# Main program
+print("👤 Select the person image")
+person_path = select_image("Select person image")
+left, right = get_shoulders(person_path)
+
+print("🧥 Select the shirt image (transparent PNG)")
+shirt_path = select_image("Select shirt image")
+
+overlay_shirt(person_path, shirt_path, left, right)
